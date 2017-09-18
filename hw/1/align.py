@@ -23,8 +23,8 @@ def preprocessing(img):
 
     img = img.reshape(3, img.shape[0] // 3, img.shape[1])
     pad = 0.05
-    x_pad = int(0.05 * img.shape[1])
-    y_pad = int(0.05 * img.shape[2])
+    x_pad = int(pad * img.shape[1])
+    y_pad = int(pad * img.shape[2])
     img = img[:, x_pad:-x_pad, y_pad:-y_pad]
     return img
 
