@@ -1,4 +1,5 @@
 test.py
 data/*
 one/*
-__pychace__/*
+__pycache__/*
+eleven/*

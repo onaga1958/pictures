@@ -29,24 +29,50 @@ def preprocessing(img):
     return img
 
 
-def find_optimal_shift(img, unknown_channels, known_channel, metric):
-    max_shift = 15
-    shifts = []
-    metrics = np.zeros((31, 31))
+def resolution_reduction(img):
+    x = np.arange(0, img.shape[1], 2)
+    y = np.arange(0, img.shape[2], 2)
+    img = img[:, x]
+    return img[:, :, y]
 
-    for channel in unknown_channels:
-        for i in range(-max_shift, max_shift + 1):
-            for j in range(-max_shift, max_shift + 1):
+
+def find_optimal_shift(img, unknown_channels, known_channel, metric):
+    pyramid = [img]
+
+    while pyramid[-1].shape[1] > 500:
+        pyramid.append(resolution_reduction(pyramid[-1]))
+    start_shift = np.zeros((2, 2), dtype=np.int)
+
+    max_shift = 15
+    for i, img_version in enumerate(reversed(pyramid)):
+        start_shift *= 2
+        start_shift = searching_shift(img_version, unknown_channels,
+                                      known_channel, metric, max_shift,
+                                      start_shift)
+        max_shift = 1
+
+    return start_shift
+
+
+def searching_shift(img, unknown_channels, known_channel, metric,
+                    max_shift, start_shift):
+    shifts = []
+
+    for ss, channel in zip(start_shift, unknown_channels):
+        min_metric = 10 ** 10
+        curr_shift = [0, 0]
+
+        for i in range(-max_shift + ss[0], max_shift + 1 + ss[0]):
+            for j in range(-max_shift + ss[1], max_shift + 1 + ss[1]):
                 metr = metric(shift(img[channel], i, j),
                               shift(img[known_channel], -i, -j))
-                metrics[i+max_shift][j+max_shift] = metr
+                if metr < min_metric:
+                    min_metric = metr
+                    curr_shift = [i, j]
 
-        optimal = np.where(metrics == metrics.min())
-        print(optimal)
-        shifts.append([optimal[0][0] - max_shift,
-                       optimal[1][0] - max_shift])
+        shifts.append(curr_shift)
 
-    return shifts
+    return np.array(shifts)
 
 
 def align(img, g_coord, metric=cross_cor):
@@ -57,11 +83,12 @@ def align(img, g_coord, metric=cross_cor):
     shifts = find_optimal_shift(img, unknown_channels, known_channel, metric)
 
     for sh, channel in zip(shifts, unknown_channels):
-       img[channel] = ndi.shift(img[channel], sh)
+        img[channel] = ndi.shift(img[channel], sh)
 
     original_shape = int(img.shape[1] * 10 / 9)
     shifts[0][0] -= original_shape
     shifts[1][0] += original_shape
 
-    return [img.transpose([1, 2, 0])] + [[gc + sh for gc, sh in zip(g_coord, shs)]
-                     for shs in shifts]
+    return [img.transpose([1, 2, 0])] + [[gc + sh
+                                          for gc, sh in zip(g_coord, shs)]
+                                         for shs in shifts]
