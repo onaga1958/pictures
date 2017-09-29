@@ -1,15 +1,15 @@
 import numpy as np
 
 
-def get_derivative(matrix):
-    return np.concatenate(([matrix[1] - matrix[0]],
+def get_derivative_x(matrix):
+    return np.concatenate((matrix[1:2] - matrix[:1],
                            matrix[2:] - matrix[:-2],
-                           [matrix[-1] - matrix[-2]]))
+                           matrix[-1:] - matrix[-2:-1]))
 
 def get_derivative_y(matrix):
-    return np.concatenate(matrix[:,1] - matrix[:,0],
-                          matrix[:,2:] - matrix[:,:-2],
-                          matrix[:,-1] - matrix[:,-2], axis=1)
+    return np.concatenate((matrix[:,1:2] - matrix[:,:1],
+                           matrix[:,2:] - matrix[:,:-2],
+                           matrix[:,-1:] - matrix[:,-2:-1]), axis=1)
 
 
 def count_energy(img, mask):
@@ -18,9 +18,8 @@ def count_energy(img, mask):
                          0.587*img[:,:,1] +
                          0.114*img[:,:,2])
 
-    x_derivative = get_derivative(brightness_matrix)
-    y_derivative = get_derivative(brightness_matrix.transpose())
-    y_derivative = y_derivative.transpose()
+    x_derivative = get_derivative_x(brightness_matrix)
+    y_derivative = get_derivative_y(brightness_matrix)
     energy = np.sqrt(x_derivative**2 + y_derivative**2)
     if mask is not None:
         energy[mask == 1] += max_energy
@@ -44,7 +43,7 @@ def count_energy_among_seam(energy):
 
 
 def find_seam_with_least_energy(energy):
-    previous_y = np.argmin(energy[-1], axis=0)
+    previous_y = np.argmin(energy[-1])
     seam_mask = np.zeros_like(energy, dtype=np.int8)
     seam_mask[-1][previous_y] = 1
 
@@ -60,13 +59,13 @@ def find_seam_with_least_energy(energy):
 
 def remove_seam_with_least_energy(img, energy, mask):
     seam_mask = find_seam_with_least_energy(energy)
-    if mask is not None:
-        mask = mask[seam_mask == 0]
+    # if mask is not None:
+        # mask = mask[seam_mask == 0]
 
-    shape = list(img.shape)
-    shape[1] -= 1
-    img = img.transpose([2, 0 ,1])
-    img = img[:, seam_mask == 0].transpose().reshape(shape)
+    # shape = list(img.shape)
+    # shape[1] -= 1
+    # img = img.transpose([2, 0 ,1])
+    # img = img[:, seam_mask == 0].transpose().reshape(shape)
     return [img, mask, seam_mask]
 
 
@@ -89,9 +88,9 @@ def seam_carve(img, command, mask=None):
         result = remove_seam_with_least_energy(img.transpose([1, 0, 2]),
                                                energy,
                                                mask)
-        result[0] = result[0].transpose([1, 0, 2])
-        if result[1] is not None:
-            result[1] = result[1].transpose()
+        # result[0] = result[0].transpose([1, 0, 2])
+        # if result[1] is not None:
+            # result[1] = result[1].transpose()
         result[2] = result[2].transpose()
 
     if command == 'horizontal expand':
@@ -105,9 +104,9 @@ def seam_carve(img, command, mask=None):
         result = copy_seam_with_least_energy(img.transpose([1, 0, 2]),
                                              energy,
                                              mask)
-        result[0] = result[0].transpose([1, 0, 2])
-        if result[1] is not None:
-            result[1] = result[1].transpose()
+        # result[0] = result[0].transpose([1, 0, 2])
+        # if result[1] is not None:
+            # result[1] = result[1].transpose()
         result[2] = result[2].transpose()
 
     return result
