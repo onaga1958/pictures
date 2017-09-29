@@ -1,31 +1,31 @@
 import numpy as np
 
 
-def get_brightness(point):
-    return 0.299*point[0] + 0.587*point[1] + 0.114*point[2]
+def get_derivative(matrix):
+    return np.concatenate(([matrix[1] - matrix[0]],
+                           matrix[2:] - matrix[:-2],
+                           [matrix[-1] - matrix[-2]]))
+
+def get_derivative_y(matrix):
+    return np.concatenate(matrix[:,1] - matrix[:,0],
+                          matrix[:,2:] - matrix[:,:-2],
+                          matrix[:,-1] - matrix[:,-2], axis=1)
 
 
-def get_derivative(img, x, y):
-    if x != 0 and x != img.shape[0] - 1:
-        return get_brightness(img[x + 1][y]) - get_brightness(img[x - 1][y])
-    else:
-        if x == 0:
-            return get_brightness(img[x + 1][y]) - get_brightness(img[x][y])
-        else:
-            return get_brightness(img[x][y]) - get_brightness(img[x - 1][y])
+def count_energy(img, mask):
+    max_energy = img.shape[0] * img.shape[1] * 256
+    brightness_matrix = (0.299*img[:,:,0] +
+                         0.587*img[:,:,1] +
+                         0.114*img[:,:,2])
 
-
-def get_grad(img, x, y):
-    x_der = get_derivative(img, x, y)
-    y_der = get_derivative(img.transpose([1, 0, 2]), y, x)
-    return np.sqrt(x_der ** 2 + y_der ** 2)
-
-
-def count_energy(img):
-    return np.array([[get_grad(img, x, y)
-                      for y in range(img.shape[1])]
-                     for x in range(img.shape[0])])
-
+    x_derivative = get_derivative(brightness_matrix)
+    y_derivative = get_derivative(brightness_matrix.transpose())
+    y_derivative = y_derivative.transpose()
+    energy = np.sqrt(x_derivative**2 + y_derivative**2)
+    if mask is not None:
+        energy[mask == 1] += max_energy
+        energy[mask == -1] -= max_energy
+    return energy
 
 def get_possible_cord(cord, shape):
     return list(range(max(cord - 1, 0), min(cord + 2, shape)))
@@ -76,7 +76,7 @@ def copy_seam_with_least_energy(img, energy, mask):
 
 
 def seam_carve(img, command, mask=None):
-    energy = count_energy(img)
+    energy = count_energy(img, mask)
 
     if command == 'horizontal shrink':
         energy = count_energy_among_seam(energy)
