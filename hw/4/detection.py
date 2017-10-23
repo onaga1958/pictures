@@ -8,6 +8,7 @@ from skimage.io import imread
 from skimage.transform import resize
 from sklearn.model_selection import train_test_split
 from os.path import abspath, dirname, join
+from matplotlib.pyplot import show, imshow
 
 import os
 import numpy as np
@@ -60,9 +61,7 @@ def _get_images_from_directory(img_dir):
     images = [imread(join(img_dir, file_name))
               for file_name in file_names]
     sizes = map(np.shape, images)
-    images = [resize(image,
-                     IMG_SIZE,
-                     mode='reflect')
+    images = [resize(image, IMG_SIZE, mode='reflect')
               for image in images]
     return np.array(images), sizes, file_names
 
@@ -78,8 +77,8 @@ def _rescale_answers(answers, sizes, straight):
 
 
 def _get_data(train_gt, train_img_dir):
-    answers = np.array(list(train_gt.values()))
-    images, sizes, _ = _get_images_from_directory(train_img_dir)
+    images, sizes, file_names = _get_images_from_directory(train_img_dir)
+    answers = np.array([train_gt[file_name] for file_name in file_names])
     return images, _rescale_answers(answers, sizes, True)
 
 
@@ -89,9 +88,11 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.1):
     code_dir = dirname(abspath(__file__))
     model_path = join(code_dir, 'facepoints_model.hdf5')
     epochs = 1 if fast_train else 10
-    model = _init_model(y_train.shape[1], 2, 3, 2, 64, 3, 1000, 'he_normal',
-                        l2(5e-6), 'elu')
-    # model = _init_model(y_train.shape[1], 2, 1, 1, 16, 3, 100)
+    model = _init_model(y_train.shape[1], levels=3, layers_in_level=2,
+                        filters=64, denses=3, dense_size=1024, kernel_size=3,
+                        kernel_initializer='he_normal',
+                        kernel_regularizer=l2(5e-6),
+                        activation='elu')
 
     if validation:
         split_reslut = train_test_split(X_train, y_train, test_size=validation)
@@ -101,21 +102,20 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.1):
                                  rotation_range=0,
                                  width_shift_range=0,
                                  height_shift_range=0,
-                                 horizontal_flip=False,
-                                 vertical_flip=False)
-
+                                 horizontal_flip=False,)
     datagen.fit(X_train)
-    model.fit_generator(datagen.flow(X_train, y_train,
-                                     batch_size=batch_size),
-                        steps_per_epoch=X_train.shape[0] // batch_size,
-                        epochs=epochs,
-                        workers=4)
-    if not fast_train:
-        save_model(model, model_path)
+    for _ in range(epochs):
+        model.fit_generator(datagen.flow(X_train, y_train,
+                                         batch_size=batch_size),
+                            steps_per_epoch=X_train.shape[0] // batch_size,
+                            epochs=1,
+                            workers=4)
+        if not fast_train:
+            save_model(model, model_path)
 
-    if validation:
-        loss_and_metrics = model.evaluate(X_test, y_test, batch_size=128)
-        print(loss_and_metrics)
+        if validation:
+            loss_and_metrics = model.evaluate(X_test, y_test, batch_size=128)
+            print(loss_and_metrics)
 
 
 def detect(model, test_img_dir):
