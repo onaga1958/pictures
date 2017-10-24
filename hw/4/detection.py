@@ -10,24 +10,34 @@ from os.path import abspath, dirname, join
 from matplotlib.pyplot import show, imshow
 
 import os
+import threading
 import numpy as np
+import scipy.ndimage as ndi
 
 
 IMG_SIZE = (100, 100, 3)
 
+
 # ImageDataGenerator code was partially taken from here
 # https://www.kaggle.com/hexietufts/easy-to-use-keras-imagedatagenerator/code
+def flip_axis(x, axis):
+    x = np.asarray(x).swapaxes(axis, 0)
+    x = x[::-1, ...]
+    x = x.swapaxes(0, axis)
+    return x
+
+
 class ImageDataGenerator:
-        def __init__(self, featurewise_center, featurewise_std_normalization,
-                 width_shift_range=0, height_shift_range=0,
+    def __init__(self, featurewise_center, featurewise_std_normalization,
+                 row_shift_range=0, col_shift_range=0,
                  horizontal_flip=True, vertical_flip=False):
         self.__dict__.update(locals())
-        self.channel_index = 1
-        self.row_index = 2
-        self.col_index = 3
+        self.channel_index = 3
+        self.row_index = 1
+        self.col_index = 2
         self.fill_mode = 'nearest'
 
-    def flow(X, y, batch_size=32):
+    def flow(self, X, y, batch_size=32):
         return Iterator(X, y, self, batch_size)
 
     def random_transform(self, x, y):
@@ -36,55 +46,99 @@ class ImageDataGenerator:
         img_col_index = self.col_index - 1
         img_channel_index = self.channel_index - 1
 
-        if self.height_shift_range:
-            tx = np.random.uniform(-self.height_shift_range,
-                                   self.height_shift_range)
-            tx *= x.shape[img_row_index]
+        if self.row_shift_range:
+            tx = np.random.randint(-self.row_shift_range,
+                                   self.row_shift_range + 1)
         else:
             tx = 0
 
-        if self.width_shift_range:
-            ty = np.random.uniform(-self.width_shift_range,
-                                   self.width_shift_range)
-            ty *= x.shape[img_col_index]
+        if self.col_shift_range:
+            ty = np.random.randint(-self.col_shift_range,
+                                   self.col_shift_range + 1)
         else:
             ty = 0
 
-        transform_matrix = np.array([[1, 0, tx],
-                                     [0, 1, ty],
-                                     [0, 0, 1]])
-
-
-        h, w = x.shape[img_row_index], x.shape[img_col_index]
-        transform_matrix = transform_matrix_offset_center(transform_matrix, h, w)
-        x = apply_transform(x, transform_matrix, img_channel_index,
-                            fill_mode=self.fill_mode, cval=self.cval)
+        padded = np.pad(x, ((self.row_shift_range, self.row_shift_range),
+                            (self.col_shift_range, self.col_shift_range),
+                            (0, 0)),
+                        mode='edge')
+        x = padded[tx + self.row_shift_range: tx + x.shape[0]
+                   + self.row_shift_range,
+                   ty + self.col_shift_range: ty + x.shape[1]
+                   + self.col_shift_range]
         y[::2] += tx
         y[1::2] += ty
 
         if self.horizontal_flip:
             if np.random.random() < 0.5:
                 x = flip_axis(x, img_col_index)
-                y[::2] = x.shape[img_col_index] - y[::2]
+                y[::2] = x.shape[img_col_index] - y[::2] - 1
 
         if self.vertical_flip:
             if np.random.random() < 0.5:
                 x = flip_axis(x, img_row_index)
-                y[1::2] = x.shape[img_row_index] - y[1::2]
+                y[1::2] = x.shape[img_row_index] - y[1::2] - 1
 
         return x, y
 
-    def fit(self, X, augment=False, rounds=1, seed=None):
-        X = np.copy(X)
-
+    def fit(self, X):
         if self.featurewise_center:
             self.mean = np.mean(X, axis=0)
             X -= self.mean
 
         if self.featurewise_std_normalization:
             self.std = np.std(X, axis=0)
-            X /= (self.std + 1e-7)
 
+    def standartize(self, x):
+        if self.featurewise_center:
+            x -= self.mean
+        if self.featurewise_std_normalization:
+            x /= self.std + 1e-10
+        return x
+
+
+class Iterator:
+    def __init__(self, X, y, image_data_generator, batch_size):
+        self.__dict__.update(locals())
+        self.lock = threading.Lock()
+        self.index_generator = self._flow_index(X.shape[0], batch_size)
+
+    def reset(self):
+        self.batch_index = 0
+
+    def _flow_index(self, N, batch_size):
+        self.reset()
+        while True:
+            if self.batch_index == 0:
+                index_array = np.random.permutation(N)
+            current_index = (self.batch_index * batch_size) % N
+            if N >= current_index + batch_size:
+                current_batch_size = batch_size
+                self.batch_index += 1
+            else:
+                current_batch_size = N - current_index
+                self.batch_index = 0
+
+            batch_end = current_index + current_batch_size
+            yield index_array[current_index:batch_end], current_batch_size
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        with self.lock:
+            index_array, current_batch_size = next(self.index_generator)
+
+        batch_x = np.zeros((current_batch_size,) + self.X.shape[1:])
+        batch_y = np.zeros((current_batch_size, self.y.shape[1]))
+        for batch_ind, global_ind in enumerate(index_array):
+            x = self.X[global_ind]
+            x = self.image_data_generator.standartize(x)
+            y = self.y[global_ind]
+            x, y = self.image_data_generator.random_transform(x, y)
+            batch_x[batch_ind] = x
+            batch_y[batch_ind] = y
+        return batch_x, batch_y
 
 
 def _init_model(units, layers_in_level, levels, denses, filters, kernel_size,
@@ -173,17 +227,16 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
         X_train, X_test, y_train, y_test = split_reslut
     datagen = ImageDataGenerator(featurewise_center=True,
                                  featurewise_std_normalization=True,
-                                 rotation_range=0,
-                                 width_shift_range=0,
-                                 height_shift_range=0,
-                                 horizontal_flip=False,)
+                                 row_shift_range=10,
+                                 col_shift_range=10,
+                                 horizontal_flip=True,)
     datagen.fit(X_train)
     for i in range(epochs):
         if not fast_train:
             print(str(i + 1) + ' epoch')
         try:
             model.fit_generator(datagen.flow(X_train, y_train,
-                                            batch_size=batch_size),
+                                             batch_size=batch_size),
                                 steps_per_epoch=X_train.shape[0] // batch_size,
                                 epochs=1)
             if not fast_train:
