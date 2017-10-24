@@ -1,8 +1,7 @@
 from keras.layers import Convolution2D, Dense, Activation, Flatten, MaxPool2D
 from keras.layers import BatchNormalization, Dropout
 from keras.regularizers import l2
-from keras.models import Sequential, save_model
-from keras.preprocessing.image import ImageDataGenerator
+from keras.models import Sequential, save_model, load_model
 from keras.optimizers import Adam
 from skimage.io import imread
 from skimage.transform import resize
@@ -15,6 +14,77 @@ import numpy as np
 
 
 IMG_SIZE = (100, 100, 3)
+
+# ImageDataGenerator code was partially taken from here
+# https://www.kaggle.com/hexietufts/easy-to-use-keras-imagedatagenerator/code
+class ImageDataGenerator:
+        def __init__(self, featurewise_center, featurewise_std_normalization,
+                 width_shift_range=0, height_shift_range=0,
+                 horizontal_flip=True, vertical_flip=False):
+        self.__dict__.update(locals())
+        self.channel_index = 1
+        self.row_index = 2
+        self.col_index = 3
+        self.fill_mode = 'nearest'
+
+    def flow(X, y, batch_size=32):
+        return Iterator(X, y, self, batch_size)
+
+    def random_transform(self, x, y):
+        # x is a single image, so it doesn't have image number at index 0
+        img_row_index = self.row_index - 1
+        img_col_index = self.col_index - 1
+        img_channel_index = self.channel_index - 1
+
+        if self.height_shift_range:
+            tx = np.random.uniform(-self.height_shift_range,
+                                   self.height_shift_range)
+            tx *= x.shape[img_row_index]
+        else:
+            tx = 0
+
+        if self.width_shift_range:
+            ty = np.random.uniform(-self.width_shift_range,
+                                   self.width_shift_range)
+            ty *= x.shape[img_col_index]
+        else:
+            ty = 0
+
+        transform_matrix = np.array([[1, 0, tx],
+                                     [0, 1, ty],
+                                     [0, 0, 1]])
+
+
+        h, w = x.shape[img_row_index], x.shape[img_col_index]
+        transform_matrix = transform_matrix_offset_center(transform_matrix, h, w)
+        x = apply_transform(x, transform_matrix, img_channel_index,
+                            fill_mode=self.fill_mode, cval=self.cval)
+        y[::2] += tx
+        y[1::2] += ty
+
+        if self.horizontal_flip:
+            if np.random.random() < 0.5:
+                x = flip_axis(x, img_col_index)
+                y[::2] = x.shape[img_col_index] - y[::2]
+
+        if self.vertical_flip:
+            if np.random.random() < 0.5:
+                x = flip_axis(x, img_row_index)
+                y[1::2] = x.shape[img_row_index] - y[1::2]
+
+        return x, y
+
+    def fit(self, X, augment=False, rounds=1, seed=None):
+        X = np.copy(X)
+
+        if self.featurewise_center:
+            self.mean = np.mean(X, axis=0)
+            X -= self.mean
+
+        if self.featurewise_std_normalization:
+            self.std = np.std(X, axis=0)
+            X /= (self.std + 1e-7)
+
 
 
 def _init_model(units, layers_in_level, levels, denses, filters, kernel_size,
@@ -52,7 +122,8 @@ def _init_model(units, layers_in_level, levels, denses, filters, kernel_size,
             model.add(Dropout(0.25))
 
     model.compile(loss='mean_squared_error',
-                  optimizer=Adam())
+                  optimizer=Adam(),
+                  metrics=['mse'])
     return model
 
 
@@ -87,12 +158,15 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
     batch_size = 32
     code_dir = dirname(abspath(__file__))
     model_path = join(code_dir, 'facepoints_model.hdf5')
-    epochs = 1 if fast_train else 10
-    model = _init_model(y_train.shape[1], levels=3, layers_in_level=2,
-                        filters=64, denses=3, dense_size=1024, kernel_size=3,
-                        kernel_initializer='he_normal',
-                        kernel_regularizer=l2(5e-6),
-                        activation='elu')
+    epochs = 1 if fast_train else 40
+    if fast_train or not os.path.exists(model_path):
+        model = _init_model(y_train.shape[1], levels=4, layers_in_level=2,
+                            filters=32, denses=3, dense_size=512, kernel_size=3,
+                            kernel_initializer='he_normal',
+                            kernel_regularizer=l2(1e-3),
+                            activation='elu')
+    else:
+        model = load_model(model_path)
 
     if validation:
         split_reslut = train_test_split(X_train, y_train, test_size=validation)
@@ -104,14 +178,19 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
                                  height_shift_range=0,
                                  horizontal_flip=False,)
     datagen.fit(X_train)
-    for _ in range(epochs):
-        model.fit_generator(datagen.flow(X_train, y_train,
-                                         batch_size=batch_size),
-                            steps_per_epoch=X_train.shape[0] // batch_size,
-                            epochs=1,
-                            workers=4)
+    for i in range(epochs):
         if not fast_train:
-            save_model(model, model_path)
+            print(str(i + 1) + ' epoch')
+        try:
+            model.fit_generator(datagen.flow(X_train, y_train,
+                                            batch_size=batch_size),
+                                steps_per_epoch=X_train.shape[0] // batch_size,
+                                epochs=1)
+            if not fast_train:
+                save_model(model, model_path)
+        except MemoryError as e:
+            print('memory error!')
+            break
 
         if validation:
             loss_and_metrics = model.evaluate(X_test, y_test, batch_size=128)
