@@ -28,9 +28,10 @@ def flip_axis(x, axis):
 
 
 class ImageDataGenerator:
-    def __init__(self, featurewise_center, featurewise_std_normalization,
+    def __init__(self, featurewise_center=False,
+                 featurewise_std_normalization=False,
                  row_shift_range=0, col_shift_range=0,
-                 horizontal_flip=True, vertical_flip=False):
+                 horizontal_flip=False, vertical_flip=False):
         self.__dict__.update(locals())
         self.channel_index = 3
         self.row_index = 1
@@ -42,6 +43,7 @@ class ImageDataGenerator:
 
     def random_transform(self, x, y):
         # x is a single image, so it doesn't have image number at index 0
+        # Maybe should swap ::2 and 1::2
         img_row_index = self.row_index - 1
         img_col_index = self.col_index - 1
         img_channel_index = self.channel_index - 1
@@ -62,9 +64,9 @@ class ImageDataGenerator:
                             (self.col_shift_range, self.col_shift_range),
                             (0, 0)),
                         mode='edge')
-        x = padded[tx + self.row_shift_range: tx + x.shape[0]
+        x = padded[-tx + self.row_shift_range: -tx + x.shape[0]
                    + self.row_shift_range,
-                   ty + self.col_shift_range: ty + x.shape[1]
+                   -ty + self.col_shift_range: -ty + x.shape[1]
                    + self.col_shift_range]
         y[::2] += tx
         y[1::2] += ty
@@ -72,12 +74,12 @@ class ImageDataGenerator:
         if self.horizontal_flip:
             if np.random.random() < 0.5:
                 x = flip_axis(x, img_col_index)
-                y[::2] = x.shape[img_col_index] - y[::2] - 1
+                y[1::2] = x.shape[img_col_index] - y[1::2] - 1
 
         if self.vertical_flip:
             if np.random.random() < 0.5:
                 x = flip_axis(x, img_row_index)
-                y[1::2] = x.shape[img_row_index] - y[1::2] - 1
+                y[::2] = x.shape[img_row_index] - y[::2] - 1
 
         return x, y
 
