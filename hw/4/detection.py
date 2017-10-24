@@ -82,7 +82,7 @@ def _get_data(train_gt, train_img_dir):
     return images, _rescale_answers(answers, sizes, True)
 
 
-def train_detector(train_gt, train_img_dir, fast_train, validation=0.1):
+def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
     X_train, y_train = _get_data(train_gt, train_img_dir)
     batch_size = 32
     code_dir = dirname(abspath(__file__))
