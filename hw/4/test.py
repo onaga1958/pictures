@@ -100,7 +100,7 @@ def run_single_test(data_dir, output_dir):
     train_gt = read_csv(join(train_dir, 'gt.csv'))
     train_img_dir = join(train_dir, 'images')
 
-    train_detector(train_gt, train_img_dir, fast_train=False)
+    train_detector(train_gt, train_img_dir, fast_train=False, validation=0.3)
 
     code_dir = dirname(abspath(__file__))
     model = load_model(join(code_dir, 'facepoints_model.hdf5'))
