@@ -86,6 +86,7 @@ class ImageDataGenerator:
         return x, new_y
 
     def fit(self, X):
+        X = np.copy(X)
         if self.featurewise_center:
             self.mean = np.mean(X, axis=0)
             X -= self.mean
@@ -94,6 +95,7 @@ class ImageDataGenerator:
             self.std = np.std(X, axis=0)
 
     def standartize(self, x):
+        x = np.copy(x)
         if self.featurewise_center:
             x -= self.mean
         if self.featurewise_std_normalization:
