@@ -242,8 +242,7 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
             model.fit_generator(datagen.flow(X_train, y_train,
                                              batch_size=batch_size),
                                 steps_per_epoch=X_train.shape[0] // batch_size,
-                                epochs=1,
-                                workers=4)
+                                epochs=1)
             if not fast_train:
                 save_model(model, model_path)
         except MemoryError as e:
@@ -257,6 +256,10 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
 
 def detect(model, test_img_dir):
     X_test, sizes, file_names = _get_images_from_directory(test_img_dir)
+    datagen = ImageDataGenerator(featurewise_center=True,
+                                 featurewise_std_normalization=True)
+    datagen.fit(X_test)
+    X_test = datagen.standartize(X_test)
     answers = model.predict(X_test, batch_size=128)
     answers = _rescale_answers(answers, sizes, False)
     answers = {file_name: answer
