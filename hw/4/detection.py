@@ -1,5 +1,6 @@
 from keras.layers import Convolution2D, Dense, Activation, Flatten, MaxPool2D
 from keras.layers import BatchNormalization, Dropout
+from keras.preprocessing.image import ImageDataGenerator
 from keras.regularizers import l2
 from keras.models import Sequential, save_model, load_model
 from keras.optimizers import Adam
@@ -28,6 +29,7 @@ def flip_axis(x, axis):
     return x
 
 
+"""
 class ImageDataGenerator:
     def __init__(self, featurewise_center=False,
                  featurewise_std_normalization=False,
@@ -144,6 +146,8 @@ class Iterator:
             batch_y[batch_ind] = y
         return batch_x, batch_y
 
+"""
+
 
 def _init_model(units, layers_in_level, levels, denses, filters, kernel_size,
                 dense_size, kernel_initializer, kernel_regularizer,
@@ -216,12 +220,12 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
     batch_size = 32
     code_dir = dirname(abspath(__file__))
     model_path = join(code_dir, 'facepoints_model.hdf5')
-    epochs = 1 if fast_train else 40
+    epochs = 1 if fast_train else 18
     if fast_train or not os.path.exists(model_path):
         model = _init_model(y_train.shape[1], levels=3, layers_in_level=2,
                             filters=64, denses=3, dense_size=512, kernel_size=3,
                             kernel_initializer='he_normal',
-                            kernel_regularizer=l2(1e-4),
+                            kernel_regularizer=l2(5e-6),
                             activation='elu')
     else:
         model = load_model(model_path)
@@ -230,10 +234,7 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
         split_reslut = train_test_split(X_train, y_train, test_size=validation)
         X_train, X_test, y_train, y_test = split_reslut
     datagen = ImageDataGenerator(featurewise_center=True,
-                                 featurewise_std_normalization=True,
-                                 row_shift_range=10,
-                                 col_shift_range=10,
-                                 horizontal_flip=True,)
+                                 featurewise_std_normalization=True,)
     datagen.fit(X_train)
 
     for i in range(epochs):
