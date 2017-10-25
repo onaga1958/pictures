@@ -8,6 +8,7 @@ from skimage.transform import resize
 from sklearn.model_selection import train_test_split
 from os.path import abspath, dirname, join
 from matplotlib.pyplot import show, imshow
+from copy import copy
 
 import os
 import threading
@@ -43,10 +44,11 @@ class ImageDataGenerator:
 
     def random_transform(self, x, y):
         # x is a single image, so it doesn't have image number at index 0
-        # Maybe should swap ::2 and 1::2
+        # Maybe should swap 0::2 and 1::2
         img_row_index = self.row_index - 1
         img_col_index = self.col_index - 1
         img_channel_index = self.channel_index - 1
+        new_y = copy(y)
 
         if self.row_shift_range:
             tx = np.random.randint(-self.row_shift_range,
@@ -68,20 +70,20 @@ class ImageDataGenerator:
                    + self.row_shift_range,
                    -ty + self.col_shift_range: -ty + x.shape[1]
                    + self.col_shift_range]
-        y[1::2] += tx
-        y[0::2] += ty
+        new_y[1::2] += tx
+        new_y[0::2] += ty
 
         if self.horizontal_flip:
             if np.random.random() < 0.5:
                 x = flip_axis(x, img_col_index)
-                y[0::2] = x.shape[img_col_index] - y[0::2] - 1
+                new_y[0::2] = x.shape[img_col_index] - new_y[0::2] - 1
 
         if self.vertical_flip:
             if np.random.random() < 0.5:
                 x = flip_axis(x, img_row_index)
-                y[1::2] = x.shape[img_row_index] - y[1::2] - 1
+                new_y[1::2] = x.shape[img_row_index] - new_y[1::2] - 1
 
-        return x, y
+        return x, new_y
 
     def fit(self, X):
         if self.featurewise_center:
@@ -216,8 +218,8 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
     model_path = join(code_dir, 'facepoints_model.hdf5')
     epochs = 1 if fast_train else 40
     if fast_train or not os.path.exists(model_path):
-        model = _init_model(y_train.shape[1], levels=4, layers_in_level=2,
-                            filters=32, denses=3, dense_size=512, kernel_size=3,
+        model = _init_model(y_train.shape[1], levels=3, layers_in_level=2,
+                            filters=64, denses=3, dense_size=512, kernel_size=3,
                             kernel_initializer='he_normal',
                             kernel_regularizer=l2(1e-4),
                             activation='elu')
@@ -240,7 +242,8 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
             model.fit_generator(datagen.flow(X_train, y_train,
                                              batch_size=batch_size),
                                 steps_per_epoch=X_train.shape[0] // batch_size,
-                                epochs=1)
+                                epochs=1,
+                                workers=4)
             if not fast_train:
                 save_model(model, model_path)
         except MemoryError as e:
