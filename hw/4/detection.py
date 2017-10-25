@@ -235,6 +235,8 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
                                  col_shift_range=10,
                                  horizontal_flip=True,)
     datagen.fit(X_train)
+    X_test = datagen.standartize(X_test)
+
     for i in range(epochs):
         if not fast_train:
             print(str(i + 1) + ' epoch')
