@@ -68,18 +68,18 @@ class ImageDataGenerator:
                    + self.row_shift_range,
                    -ty + self.col_shift_range: -ty + x.shape[1]
                    + self.col_shift_range]
-        y[::2] += tx
-        y[1::2] += ty
+        y[1::2] += tx
+        y[0::2] += ty
 
         if self.horizontal_flip:
             if np.random.random() < 0.5:
                 x = flip_axis(x, img_col_index)
-                y[1::2] = x.shape[img_col_index] - y[1::2] - 1
+                y[0::2] = x.shape[img_col_index] - y[0::2] - 1
 
         if self.vertical_flip:
             if np.random.random() < 0.5:
                 x = flip_axis(x, img_row_index)
-                y[::2] = x.shape[img_row_index] - y[::2] - 1
+                y[1::2] = x.shape[img_row_index] - y[1::2] - 1
 
         return x, y
 
@@ -219,7 +219,7 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
         model = _init_model(y_train.shape[1], levels=4, layers_in_level=2,
                             filters=32, denses=3, dense_size=512, kernel_size=3,
                             kernel_initializer='he_normal',
-                            kernel_regularizer=l2(1e-3),
+                            kernel_regularizer=l2(1e-4),
                             activation='elu')
     else:
         model = load_model(model_path)
