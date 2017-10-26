@@ -22,6 +22,11 @@ IMG_SIZE = (100, 100, 3)
 
 # ImageDataGenerator code was partially taken from here
 # https://www.kaggle.com/hexietufts/easy-to-use-keras-imagedatagenerator/code
+def normalize(X):
+    X -= np.mean(X, axis=0)
+    X /= np.std(X, axis=0)
+
+
 def flip_axis(x, axis):
     x = np.asarray(x).swapaxes(axis, 0)
     x = x[::-1, ...]
@@ -87,21 +92,11 @@ class ImageDataGenerator:
         return x, new_y
 
     def fit(self, X):
-        X = np.copy(X)
         if self.featurewise_center:
-            self.mean = np.mean(X, axis=0)
-            X -= self.mean
+            X -= np.mean(X, axis=0)
 
         if self.featurewise_std_normalization:
-            self.std = np.std(X, axis=0)
-
-    def standartize(self, x):
-        x = np.copy(x)
-        if self.featurewise_center:
-            x -= self.mean
-        if self.featurewise_std_normalization:
-            x /= self.std + 1e-10
-        return x
+            X /= (np.std(X, axis=0) + 1e-10)
 
 
 class Iterator:
@@ -140,7 +135,6 @@ class Iterator:
         batch_y = np.zeros((current_batch_size, self.y.shape[1]))
         for batch_ind, global_ind in enumerate(index_array):
             x = self.X[global_ind]
-            x = self.image_data_generator.standartize(x)
             y = self.y[global_ind]
             x, y = self.image_data_generator.random_transform(x, y)
             batch_x[batch_ind] = x
@@ -149,7 +143,7 @@ class Iterator:
 
 
 def _init_model(units, layers_in_level, levels, denses, filters, kernel_size,
-                dense_size, kernel_initializer, kernel_regularizer,
+                dense_size, kernel_initializer, kernel_regularizer, dropout,
                 activation):
     model = Sequential()
 
@@ -180,7 +174,7 @@ def _init_model(units, layers_in_level, levels, denses, filters, kernel_size,
             params['units'] = dense_size
         model.add(Dense(**params))
         if i != denses - 1:
-            model.add(Dropout(0.25))
+            model.add(Dropout(dropout))
 
     model.compile(loss='mean_squared_error',
                   optimizer=Adam(),
@@ -224,7 +218,7 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
         model = _init_model(y_train.shape[1], levels=3, layers_in_level=2,
                             filters=64, denses=3, dense_size=512, kernel_size=3,
                             kernel_initializer='he_normal',
-                            kernel_regularizer=l2(5e-6),
+                            kernel_regularizer=l2(1e-5), dropout=0.5,
                             activation='elu')
     else:
         model = load_model(model_path)
@@ -238,7 +232,7 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
                                  row_shift_range=10,
                                  horizontal_flip=True,)
     datagen.fit(X_train)
-    X_test = datagen.standartize(X_test)
+    normalize(X_test)
 
     for i in range(epochs):
         if not fast_train:
@@ -261,6 +255,8 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
 
 def detect(model, test_img_dir):
     X_test, sizes, file_names = _get_images_from_directory(test_img_dir)
+    normalize(X_test)
+
     answers = model.predict(X_test, batch_size=128)
     answers = _rescale_answers(answers, sizes, False)
     answers = {file_name: answer
