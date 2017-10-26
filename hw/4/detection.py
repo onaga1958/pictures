@@ -144,12 +144,12 @@ class Iterator:
 
 def _init_model(units, layers_in_level, levels, denses, filters, kernel_size,
                 dense_size, kernel_initializer, kernel_regularizer, dropout,
-                activation):
+                activation, filters_multiplicator):
     model = Sequential()
 
     for i in range(levels):
         for j in range(layers_in_level):
-            params = {'filters': filters * 2**i,
+            params = {'filters': filters * filters_multiplicator**i,
                       'kernel_size': kernel_size,
                       'padding': 'same',
                       'kernel_initializer': kernel_initializer,
@@ -166,18 +166,18 @@ def _init_model(units, layers_in_level, levels, denses, filters, kernel_size,
     model.add(Flatten())
     for i in range(denses):
         params = {'kernel_initializer': kernel_initializer,
-                  'kernel_regularizer': kernel_regularizer,
-                  'activation': activation}
+                  'kernel_regularizer': kernel_regularizer, }
         if i == denses - 1:
             params['units'] = units
         else:
+            params['activation'] = activation
             params['units'] = dense_size
         model.add(Dense(**params))
         if i != denses - 1:
             model.add(Dropout(dropout))
 
     model.compile(loss='mean_squared_error',
-                  optimizer=Adam(),
+                  optimizer=Adam(decay=1e-7),
                   metrics=['mse'])
     return model
 
@@ -213,18 +213,23 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
     batch_size = 32
     code_dir = dirname(abspath(__file__))
     model_path = join(code_dir, 'facepoints_model.hdf5')
-    epochs = 1 if fast_train else 50
+    epochs = 1 if fast_train else 200
+    epochs_batch = 10
+
     if fast_train or not os.path.exists(model_path):
-        model = _init_model(y_train.shape[1], levels=3, layers_in_level=2,
-                            filters=64, denses=3, dense_size=512, kernel_size=3,
-                            kernel_initializer='he_normal',
-                            kernel_regularizer=l2(1e-5), dropout=0.5,
+        model = _init_model(y_train.shape[1], levels=2, layers_in_level=1,
+                            filters=64, denses=2, dense_size=512,
+                            filters_multiplicator=2,
+                            kernel_size=3,
+                            kernel_initializer='glorot_normal',
+                            kernel_regularizer=l2(1e-2), dropout=0.5,
                             activation='elu')
     else:
         model = load_model(model_path)
 
     if validation:
-        split_reslut = train_test_split(X_train, y_train, test_size=validation)
+        split_reslut = train_test_split(X_train, y_train, test_size=validation,
+                                        random_state=42)
         X_train, X_test, y_train, y_test = split_reslut
     datagen = ImageDataGenerator(featurewise_center=True,
                                  featurewise_std_normalization=True,
@@ -234,14 +239,14 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
     datagen.fit(X_train)
     normalize(X_test)
 
-    for i in range(epochs):
-        if not fast_train:
-            print(str(i + 1) + ' epoch')
+    for i in range(0, epochs, epochs_batch):
         try:
             model.fit_generator(datagen.flow(X_train, y_train,
                                              batch_size=batch_size),
                                 steps_per_epoch=X_train.shape[0] // batch_size,
-                                epochs=1)
+                                validation_data=(X_test, y_test),
+                                epochs=epochs_batch + i,
+                                initial_epoch=i)
             if not fast_train:
                 save_model(model, model_path)
         except MemoryError as e:
