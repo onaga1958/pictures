@@ -177,7 +177,7 @@ def _init_model(units, layers_in_level, levels, denses, filters, kernel_size,
             model.add(Dropout(dropout))
 
     model.compile(loss='mean_squared_error',
-                  optimizer=Adam(decay=1e-7),
+                  optimizer=Adam(decay=1e-5),
                   metrics=['mse'])
     return model
 
@@ -217,7 +217,7 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
     epochs_batch = 10
 
     if fast_train or not os.path.exists(model_path):
-        model = _init_model(y_train.shape[1], levels=2, layers_in_level=1,
+        model = _init_model(y_train.shape[1], levels=3, layers_in_level=2,
                             filters=64, denses=2, dense_size=512,
                             filters_multiplicator=2,
                             kernel_size=3,
@@ -231,22 +231,14 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
         split_reslut = train_test_split(X_train, y_train, test_size=validation,
                                         random_state=42)
         X_train, X_test, y_train, y_test = split_reslut
-    datagen = ImageDataGenerator(featurewise_center=True,
-                                 featurewise_std_normalization=True,
-                                 col_shift_range=10,
-                                 row_shift_range=10,
-                                 horizontal_flip=True,)
-    datagen.fit(X_train)
-    normalize(X_test)
 
     for i in range(0, epochs, epochs_batch):
         try:
-            model.fit_generator(datagen.flow(X_train, y_train,
-                                             batch_size=batch_size),
-                                steps_per_epoch=X_train.shape[0] // batch_size,
-                                validation_data=(X_test, y_test),
-                                epochs=epochs_batch + i,
-                                initial_epoch=i)
+            model.fit(X_train, y_train,
+                      batch_size=batch_size,
+                      validation_data=(X_test, y_test),
+                      epochs=epochs_batch + i,
+                      initial_epoch=i)
             if not fast_train:
                 save_model(model, model_path)
         except MemoryError as e:
@@ -260,7 +252,6 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
 
 def detect(model, test_img_dir):
     X_test, sizes, file_names = _get_images_from_directory(test_img_dir)
-    normalize(X_test)
 
     answers = model.predict(X_test, batch_size=128)
     answers = _rescale_answers(answers, sizes, False)
