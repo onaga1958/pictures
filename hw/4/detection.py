@@ -1,6 +1,5 @@
 from keras.layers import Convolution2D, Dense, Activation, Flatten, MaxPool2D
 from keras.layers import BatchNormalization, Dropout
-# from keras.preprocessing.image import ImageDataGenerator
 from keras.regularizers import l2
 from keras.models import Sequential, save_model, load_model
 from keras.optimizers import Adam
@@ -8,8 +7,7 @@ from skimage.io import imread
 from skimage.transform import resize
 from sklearn.model_selection import train_test_split
 from os.path import abspath, dirname, join
-from matplotlib.pyplot import show, imshow
-from copy import copy
+from math import ceil
 
 import os
 import threading
@@ -20,126 +18,63 @@ import scipy.ndimage as ndi
 IMG_SIZE = (100, 100, 3)
 
 
-# ImageDataGenerator code was partially taken from here
-# https://www.kaggle.com/hexietufts/easy-to-use-keras-imagedatagenerator/code
-def normalize(X):
-    X -= np.mean(X, axis=0)
-    X /= np.std(X, axis=0)
+class Datagen:
+    def __init__(self, img_dir, train_gt=None, batch_size=32):
+        self.file_names = os.listdir(img_dir)
+        self.batch_size = batch_size
+        self.img_dir = img_dir
+        self.y = train_gt
+        self.index = 0
 
-
-def flip_axis(x, axis):
-    x = np.asarray(x).swapaxes(axis, 0)
-    x = x[::-1, ...]
-    x = x.swapaxes(0, axis)
-    return x
-
-
-class ImageDataGenerator:
-    def __init__(self, featurewise_center=False,
-                 featurewise_std_normalization=False,
-                 row_shift_range=0, col_shift_range=0,
-                 horizontal_flip=False, vertical_flip=False):
-        self.__dict__.update(locals())
-        self.channel_index = 3
-        self.row_index = 1
-        self.col_index = 2
-        self.fill_mode = 'nearest'
-
-    def flow(self, X, y, batch_size=32):
-        return Iterator(X, y, self, batch_size)
-
-    def random_transform(self, x, y):
-        # x is a single image, so it doesn't have image number at index 0
-        # Maybe should swap 0::2 and 1::2
-        img_row_index = self.row_index - 1
-        img_col_index = self.col_index - 1
-        img_channel_index = self.channel_index - 1
-        new_y = copy(y)
-
-        if self.row_shift_range:
-            tx = np.random.randint(-self.row_shift_range,
-                                   self.row_shift_range + 1)
-        else:
-            tx = 0
-
-        if self.col_shift_range:
-            ty = np.random.randint(-self.col_shift_range,
-                                   self.col_shift_range + 1)
-        else:
-            ty = 0
-
-        padded = np.pad(x, ((self.row_shift_range, self.row_shift_range),
-                            (self.col_shift_range, self.col_shift_range),
-                            (0, 0)),
-                        mode='edge')
-        x = padded[-tx + self.row_shift_range: -tx + x.shape[0]
-                   + self.row_shift_range,
-                   -ty + self.col_shift_range: -ty + x.shape[1]
-                   + self.col_shift_range]
-        new_y[1::2] += tx
-        new_y[0::2] += ty
-
-        if self.horizontal_flip:
-            if np.random.random() < 0.5:
-                x = flip_axis(x, img_col_index)
-                new_y[0::2] = x.shape[img_col_index] - new_y[0::2] - 1
-
-        if self.vertical_flip:
-            if np.random.random() < 0.5:
-                x = flip_axis(x, img_row_index)
-                new_y[1::2] = x.shape[img_row_index] - new_y[1::2] - 1
-
-        return x, new_y
-
-    def fit(self, X):
-        if self.featurewise_center:
-            X -= np.mean(X, axis=0)
-
-        if self.featurewise_std_normalization:
-            X /= (np.std(X, axis=0) + 1e-10)
-
-
-class Iterator:
-    def __init__(self, X, y, image_data_generator, batch_size):
-        self.__dict__.update(locals())
-        self.lock = threading.Lock()
-        self.index_generator = self._flow_index(X.shape[0], batch_size)
-
-    def reset(self):
-        self.batch_index = 0
-
-    def _flow_index(self, N, batch_size):
-        self.reset()
-        while True:
-            if self.batch_index == 0:
-                index_array = np.random.permutation(N)
-            current_index = (self.batch_index * batch_size) % N
-            if N >= current_index + batch_size:
-                current_batch_size = batch_size
-                self.batch_index += 1
-            else:
-                current_batch_size = N - current_index
-                self.batch_index = 0
-
-            batch_end = current_index + current_batch_size
-            yield index_array[current_index:batch_end], current_batch_size
+        if self.y is None:
+            self.sizes = []
 
     def __iter__(self):
         return self
 
-    def __next__(self):
-        with self.lock:
-            index_array, current_batch_size = next(self.index_generator)
+    def __len__(self):
+        return len(self.file_names)
 
-        batch_x = np.zeros((current_batch_size,) + self.X.shape[1:])
-        batch_y = np.zeros((current_batch_size, self.y.shape[1]))
-        for batch_ind, global_ind in enumerate(index_array):
-            x = self.X[global_ind]
-            y = self.y[global_ind]
-            x, y = self.image_data_generator.random_transform(x, y)
-            batch_x[batch_ind] = x
-            batch_y[batch_ind] = y
-        return batch_x, batch_y
+    def get_sizes(self):
+        if self.y is not None:
+            raise Exception('You can\'t get sizes from train Datagen')
+        if len(self.file_names) > len(self.sizes):
+            raise Exception('Not all files were tested')
+        else:
+            return self.sizes[:len(self.file_names)]
+
+    def get_file_names(self):
+        return [name for name in self.file_names]
+
+    def _full_name(self, name):
+        return join(self.img_dir, name)
+
+    def get_points_number(self):
+        if self.y is None:
+            raise('You can\'t get points number from test Datagen')
+        else:
+            return self.y[self.file_names[0]].shape[0]
+
+    def __next__(self):
+        end_batch = self.index + self.batch_size
+        file_names_batch = self.file_names[self.index:end_batch]
+        self.index = (self.index + self.batch_size) % len(self.file_names)
+        if self.y is not None and end_batch > len(self.file_names):
+            file_names_batch += self.file_names[:self.index]
+
+        if self.y is not None:
+            y_batch = [self.y[file_name] for file_name in file_names_batch]
+
+        images_batch = [imread(self._full_name(file_name))
+                        for file_name in file_names_batch]
+        if self.y is None:
+            self.sizes += list(map(np.shape, images_batch))
+        images_batch = [resize(image, IMG_SIZE, mode='reflect')
+                        for image in images_batch]
+        if self.y is not None:
+            return np.array(images_batch), np.array(y_batch)
+        else:
+            return np.array(images_batch)
 
 
 def _init_model(units, layers_in_level, levels, denses, filters, kernel_size,
@@ -177,7 +112,7 @@ def _init_model(units, layers_in_level, levels, denses, filters, kernel_size,
             model.add(Dropout(dropout))
 
     model.compile(loss='mean_squared_error',
-                  optimizer=Adam(decay=1e-5),
+                  optimizer=Adam(decay=1e-3),
                   metrics=['mse'])
     return model
 
@@ -209,15 +144,26 @@ def _get_data(train_gt, train_img_dir):
 
 
 def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
-    X_train, y_train = _get_data(train_gt, train_img_dir)
     batch_size = 32
     code_dir = dirname(abspath(__file__))
     model_path = join(code_dir, 'facepoints_model.hdf5')
     epochs = 1 if fast_train else 200
     epochs_batch = 10
 
+    if not fast_train:
+        X_train, y_train = _get_data(train_gt, train_img_dir)
+        points_number = y_train.shape[1]
+    else:
+        datagen = Datagen(train_img_dir, train_gt, batch_size)
+        points_number = datagen.get_points_number()
+
+    if not fast_train and validation:
+        split_reslut = train_test_split(X_train, y_train, test_size=validation,
+                                        random_state=42)
+        X_train, X_test, y_train, y_test = split_reslut
+
     if fast_train or not os.path.exists(model_path):
-        model = _init_model(y_train.shape[1], levels=3, layers_in_level=2,
+        model = _init_model(points_number, levels=3, layers_in_level=2,
                             filters=64, denses=2, dense_size=512,
                             filters_multiplicator=2,
                             kernel_size=3,
@@ -227,33 +173,35 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
     else:
         model = load_model(model_path)
 
-    if validation:
-        split_reslut = train_test_split(X_train, y_train, test_size=validation,
-                                        random_state=42)
-        X_train, X_test, y_train, y_test = split_reslut
-
     for i in range(0, epochs, epochs_batch):
         try:
-            model.fit(X_train, y_train,
-                      batch_size=batch_size,
-                      validation_data=(X_test, y_test),
-                      epochs=epochs_batch + i,
-                      initial_epoch=i)
             if not fast_train:
+                model.fit(X_train, y_train,
+                          batch_size=batch_size,
+                          validation_data=(X_test, y_test),
+                          epochs=epochs_batch + i,
+                          initial_epoch=i)
                 save_model(model, model_path)
+            else:
+                model.fit_generator(datagen, steps_per_epoch=3,
+                                    epochs=1)
+
         except MemoryError as e:
             print('memory error!')
             break
 
-        if validation:
+        if not fast_train and validation:
             loss_and_metrics = model.evaluate(X_test, y_test, batch_size=128)
             print(loss_and_metrics)
 
 
 def detect(model, test_img_dir):
-    X_test, sizes, file_names = _get_images_from_directory(test_img_dir)
-
-    answers = model.predict(X_test, batch_size=128)
+    batch_size = 128
+    datagen = Datagen(test_img_dir, batch_size=128)
+    steps = ceil(len(datagen) / batch_size)
+    answers = model.predict_generator(datagen, steps=steps, max_queue_size=1)
+    sizes = datagen.get_sizes()
+    file_names = datagen.get_file_names()
     answers = _rescale_answers(answers, sizes, False)
     answers = {file_name: answer
                for file_name, answer in zip(file_names, answers)}
