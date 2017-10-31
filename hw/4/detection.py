@@ -1,4 +1,4 @@
-from keras.layers import Convolution2D, Dense, Activation, Flatten, MaxPool2D
+from keras.layers import Convolution2D, Dense, Flatten, MaxPool2D
 from keras.layers import BatchNormalization, Dropout
 from keras.regularizers import l2
 from keras.models import Sequential, save_model, load_model
@@ -8,11 +8,10 @@ from skimage.transform import resize
 from sklearn.model_selection import train_test_split
 from os.path import abspath, dirname, join
 from math import ceil
+from copy import copy
 
 import os
-import threading
 import numpy as np
-import scipy.ndimage as ndi
 
 
 IMG_SIZE = (100, 100, 3)
@@ -20,31 +19,16 @@ IMG_SIZE = (100, 100, 3)
 
 class Datagen:
     def __init__(self, img_dir, train_gt=None, batch_size=32):
+        self.index = 0
         self.file_names = os.listdir(img_dir)
         self.batch_size = batch_size
         self.img_dir = img_dir
         self.y = train_gt
-        self.index = 0
-
         if self.y is None:
-            self.sizes = []
+            self.sizes = np.zeros((len(self.file_names), 2))
 
     def __iter__(self):
         return self
-
-    def __len__(self):
-        return len(self.file_names)
-
-    def get_sizes(self):
-        if self.y is not None:
-            raise Exception('You can\'t get sizes from train Datagen')
-        if len(self.file_names) > len(self.sizes):
-            raise Exception('Not all files were tested')
-        else:
-            return self.sizes[:len(self.file_names)]
-
-    def get_file_names(self):
-        return [name for name in self.file_names]
 
     def _full_name(self, name):
         return join(self.img_dir, name)
@@ -55,20 +39,28 @@ class Datagen:
         else:
             return self.y[self.file_names[0]].shape[0]
 
+    def _next_index(self, old_index):
+        return (old_index + self.batch_size) % len(self.file_names)
+
     def __next__(self):
-        end_batch = self.index + self.batch_size
-        file_names_batch = self.file_names[self.index:end_batch]
-        self.index = (self.index + self.batch_size) % len(self.file_names)
+        old_index = copy(self.index)
+        self.index = self._next_index(old_index)
+
+        end_batch = old_index + self.batch_size
+        file_names_batch = self.file_names[old_index:end_batch]
         if self.y is not None and end_batch > len(self.file_names):
-            file_names_batch += self.file_names[:self.index]
+            file_names_batch += self.file_names[:self._next_index(old_index)]
 
         if self.y is not None:
             y_batch = [self.y[file_name] for file_name in file_names_batch]
 
         images_batch = [imread(self._full_name(file_name))
                         for file_name in file_names_batch]
+
         if self.y is None:
-            self.sizes += list(map(np.shape, images_batch))
+            sizes = np.array([image.shape[:2] for image in images_batch])
+            self.sizes[old_index:end_batch] = sizes
+
         images_batch = [resize(image, IMG_SIZE, mode='reflect')
                         for image in images_batch]
         if self.y is not None:
@@ -128,12 +120,22 @@ def _get_images_from_directory(img_dir):
 
 
 def _rescale_answers(answers, sizes, straight):
-    for j, size in enumerate(sizes):
-        for i in range(2):
-            multiplyer = size[i] / IMG_SIZE[i]
-            if straight:
-                multiplyer = 1 / multiplyer
-            answers[j, i::2] *= multiplyer
+    shape = answers.shape
+    reshaped_answers = np.zeros((shape[0], 2, shape[1] // 2))
+    reshaped_answers[:, 0] = answers[:, 0::2]
+    reshaped_answers[:, 1] = answers[:, 1::2]
+    reshaped_answers = reshaped_answers.transpose([2, 0, 1])
+    rescale_to = np.array(IMG_SIZE[:2])
+
+    multiplyer = (sizes / rescale_to)
+    if straight:
+        reshaped_answers /= multiplyer
+    else:
+        reshaped_answers *= multiplyer
+
+    answers[:, 0::2] = reshaped_answers[:, :, 0].T
+    answers[:, 1::2] = reshaped_answers[:, :, 1].T
+
     return answers
 
 
@@ -164,7 +166,7 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
 
     if fast_train or not os.path.exists(model_path):
         model = _init_model(points_number, levels=3, layers_in_level=2,
-                            filters=64, denses=2, dense_size=512,
+                            filters=32, denses=2, dense_size=512,
                             filters_multiplicator=2,
                             kernel_size=3,
                             kernel_initializer='glorot_normal',
@@ -183,7 +185,7 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
                           initial_epoch=i)
                 save_model(model, model_path)
             else:
-                model.fit_generator(datagen, steps_per_epoch=3,
+                model.fit_generator(datagen, steps_per_epoch=1,
                                     epochs=1)
 
         except MemoryError as e:
@@ -196,13 +198,15 @@ def train_detector(train_gt, train_img_dir, fast_train, validation=0.0):
 
 
 def detect(model, test_img_dir):
-    batch_size = 128
-    datagen = Datagen(test_img_dir, batch_size=128)
-    steps = ceil(len(datagen) / batch_size)
-    answers = model.predict_generator(datagen, steps=steps, max_queue_size=1)
-    sizes = datagen.get_sizes()
-    file_names = datagen.get_file_names()
-    answers = _rescale_answers(answers, sizes, False)
+    batch_size = 256
+
+    datagen = Datagen(test_img_dir, batch_size=batch_size)
+    steps = ceil(len(datagen.file_names) / batch_size)
+
+    answers = model.predict_generator(datagen, steps=steps,
+                                      max_queue_size=1)
+
+    answers = _rescale_answers(answers, datagen.sizes, False)
     answers = {file_name: answer
-               for file_name, answer in zip(file_names, answers)}
+               for file_name, answer in zip(datagen.file_names, answers)}
     return answers
