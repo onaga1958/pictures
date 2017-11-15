@@ -117,7 +117,6 @@ def train_classifier(train_gt, train_img_dir, fast_train, validation=0.2):
                                      width_shift_range=0.1,
                                      height_shift_range=0.1,
                                      horizontal_flip=True)
-        datagen = datagen.flow(X_train, y_train, batch_size=batch_size)
         steps_per_epoch = ceil(len(X_train) / batch_size)
     else:
         datagen = Datagen(train_img_dir, train_gt, batch_size)
@@ -127,9 +126,13 @@ def train_classifier(train_gt, train_img_dir, fast_train, validation=0.2):
         split_reslut = train_test_split(X_train, y_train, test_size=validation,
                                         random_state=42)
         X_train, X_test, y_train, y_test = split_reslut
+
         validation_data = (X_test, y_test)
     else:
         validation_data = None
+
+    if not fast_train:
+        datagen = datagen.flow(X_train, y_train, batch_size=batch_size)
 
     if fast_train or not os.path.exists(model_path):
         model = _init_model()
