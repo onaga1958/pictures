@@ -147,6 +147,6 @@ def classify(model, test_img_dir):
     answers = model.predict_generator(datagen, steps=steps,
                                       max_queue_size=1)
 
-    answers = {file_name: answer
+    answers = {file_name: np.argmax(answer)
                for file_name, answer in zip(datagen.file_names, answers)}
     return answers
