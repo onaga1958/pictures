@@ -25,7 +25,10 @@ class Datagen:
         self.file_names = os.listdir(img_dir)
         self.batch_size = batch_size
         self.img_dir = img_dir
-        self.y = train_gt
+        if train_gt is not None:
+            self.y = _get_answers(train_gt, self.file_names)
+        else:
+            self.y = None
 
     def __iter__(self):
         return self
@@ -46,7 +49,7 @@ class Datagen:
             file_names_batch += self.file_names[:self._next_index(old_index)]
 
         if self.y is not None:
-            y_batch = [self.y[file_name] for file_name in file_names_batch]
+            y_batch = self.y[old_index:end_batch]
 
         images_batch = [imread(self._full_name(file_name))
                         for file_name in file_names_batch]
@@ -68,19 +71,25 @@ def _get_images_from_directory(img_dir):
     return np.array(images), file_names
 
 
-def _get_data(train_gt, train_img_dir):
-    images, file_names = _get_images_from_directory(train_img_dir)
+def _get_answers(train_gt, file_names):
     answers = np.zeros((len(file_names), N_CLASSES))
     answers_ones_indexes = np.array([train_gt[file_name]
                                      for file_name in file_names])
     answers[np.arange(len(file_names)), answers_ones_indexes] = 1
+    return answers
+
+
+def _get_data(train_gt, train_img_dir):
+    images, file_names = _get_images_from_directory(train_img_dir)
+    answers = _get_answers(train_gt, file_names)
     return images, answers
 
 
 def _init_model():
-    basemodel = ResNet50(include_top=False)
+    basemodel = ResNet50(include_top=False, input_shape=IMG_SIZE,
+                         pooling='avg')
     base_out = basemodel.output
-    base_out = L.GlobalMaxPooling2D()(base_out)
+
     predictions = L.Dense(N_CLASSES, activation='softmax',
                           kernel_regularizer=l2(1e-3))(base_out)
     model = Model(inputs=basemodel.input, output=predictions)
@@ -88,7 +97,7 @@ def _init_model():
     for layer in basemodel.layers:
         layer.trainable = False
 
-    model.compile(optimizer=Adam(lr=1e-4, decay=1e-3),
+    model.compile(optimizer=Adam(lr=1e-3, decay=1e-3),
                   loss='categorical_crossentropy',
                   metrics=['accuracy'])
 
@@ -96,9 +105,9 @@ def _init_model():
 
 
 def train_classifier(train_gt, train_img_dir, fast_train, validation=0.2):
-    batch_size = 1
+    batch_size = 32
     epochs = 1 if fast_train else 50
-    epochs_batch = 1 if fast_train else 10
+    epochs_batch = 1 if fast_train else 5
     code_dir = dirname(abspath(__file__))
     model_path = join(code_dir, 'birds_model.hdf5')
 
@@ -118,7 +127,7 @@ def train_classifier(train_gt, train_img_dir, fast_train, validation=0.2):
         split_reslut = train_test_split(X_train, y_train, test_size=validation,
                                         random_state=42)
         X_train, X_test, y_train, y_test = split_reslut
-        validation_data = (X_train, X_test)
+        validation_data = (X_test, y_test)
     else:
         validation_data = None
 
@@ -139,7 +148,7 @@ def train_classifier(train_gt, train_img_dir, fast_train, validation=0.2):
 
 
 def classify(model, test_img_dir):
-    batch_size = 1
+    batch_size = 32
 
     datagen = Datagen(test_img_dir, batch_size=batch_size)
     steps = ceil(len(datagen.file_names) / batch_size)
