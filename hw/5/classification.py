@@ -5,7 +5,7 @@ import os
 from copy import copy
 from keras.applications.resnet50 import ResNet50
 from keras.models import Model, save_model, load_model
-from keras.optimizers import Adam
+from keras.optimizers import Adam, SGD
 from keras.preprocessing.image import ImageDataGenerator
 from keras.regularizers import l2
 from math import ceil
@@ -85,28 +85,46 @@ def _get_data(train_gt, train_img_dir):
     return images, answers
 
 
-def _init_model():
+def _init_model(regularizer_const=1e-3, dense_units=1024, learning_rate=1e-3,
+                decay=1e-3):
     basemodel = ResNet50(include_top=False, input_shape=IMG_SIZE,
                          pooling='avg')
     base_out = basemodel.output
 
+    base_out = L.Dense(dense_units, activation='relu',
+                       kernel_initializer='glorot_normal',
+                       kernel_regularizer=l2(regularizer_const))(base_out)
     predictions = L.Dense(N_CLASSES, activation='softmax',
-                          kernel_regularizer=l2(1e-3))(base_out)
+                          kernel_initializer='glorot_normal',
+                          kernel_regularizer=l2(regularizer_const))(base_out)
     model = Model(inputs=basemodel.input, output=predictions)
 
     for layer in basemodel.layers:
         layer.trainable = False
 
-    model.compile(optimizer=Adam(lr=1e-3, decay=1e-3),
+    model.compile(optimizer=Adam(lr=learning_rate, decay=decay),
                   loss='categorical_crossentropy',
                   metrics=['accuracy'])
 
     return model
 
 
+def _train(model, epochs, epochs_batch, datagen, fast_train,
+           steps_per_epoch, validation_data, model_path):
+    for i in range(0, epochs, epochs_batch):
+        model.fit_generator(datagen,
+                            max_queue_size=1,
+                            epochs=epochs_batch + i,
+                            initial_epoch=i,
+                            steps_per_epoch=steps_per_epoch,
+                            validation_data=validation_data)
+        if not fast_train:
+            save_model(model, model_path)
+
+
 def train_classifier(train_gt, train_img_dir, fast_train, validation=0.2):
     batch_size = 32
-    epochs = 1 if fast_train else 50
+    epochs = 1 if fast_train else 25
     epochs_batch = 1 if fast_train else 5
     code_dir = dirname(abspath(__file__))
     model_path = join(code_dir, 'birds_model.hdf5')
@@ -135,19 +153,25 @@ def train_classifier(train_gt, train_img_dir, fast_train, validation=0.2):
         datagen = datagen.flow(X_train, y_train, batch_size=batch_size)
 
     if fast_train or not os.path.exists(model_path):
-        model = _init_model()
+        model = _init_model(regularizer_const=1e-2)
     else:
         model = load_model(model_path)
 
-    for i in range(0, epochs, epochs_batch):
-        model.fit_generator(datagen,
-                            max_queue_size=1,
-                            epochs=epochs_batch + i,
-                            initial_epoch=i,
-                            steps_per_epoch=steps_per_epoch,
-                            validation_data=validation_data)
-        if not fast_train:
-            save_model(model, model_path)
+    _train(model, epochs, epochs_batch, datagen, fast_train,
+           steps_per_epoch, validation_data, model_path)
+
+    trainable_border = 141
+    for layer in model.layers[:trainable_border]:
+        layer.trainable = False
+    for layer in model.layers[trainable_border:]:
+        layer.trainable = True
+
+    model.compile(optimizer=Adam(lr=1e-4, decay=1e-2),
+                  loss='categorical_crossentropy',
+                  metrics=['accuracy'])
+
+    _train(model, epochs, epochs_batch, datagen, fast_train,
+           steps_per_epoch, validation_data, model_path)
 
 
 def classify(model, test_img_dir):
