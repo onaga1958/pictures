@@ -4,6 +4,8 @@ import os
 
 from copy import copy
 from keras.applications.resnet50 import ResNet50
+from keras.applications.xception import Xception
+from keras.callbacks import ReduceLROnPlateau, ModelCheckpoint
 from keras.models import Model, save_model, load_model
 from keras.optimizers import Adam, SGD
 from keras.preprocessing.image import ImageDataGenerator
@@ -15,7 +17,7 @@ from skimage.transform import resize
 from sklearn.model_selection import train_test_split
 
 
-IMG_SIZE = (224, 224, 3)
+IMG_SIZE = (299, 299, 3)  # (224, 224, 3)
 N_CLASSES = 50
 
 
@@ -87,13 +89,16 @@ def _get_data(train_gt, train_img_dir):
 
 def _init_model(regularizer_const=1e-3, dense_units=1024, learning_rate=1e-3,
                 decay=1e-3):
-    basemodel = ResNet50(include_top=False, input_shape=IMG_SIZE,
+    # basemodel = ResNet50(include_top=False, input_shape=IMG_SIZE,
+                            # pooling='avg')
+    basemodel = Xception(include_top=False, input_shape=IMG_SIZE,
                          pooling='avg')
     base_out = basemodel.output
 
-    base_out = L.Dense(dense_units, activation='relu',
+    base_out = L.Dense(dense_units, activation='elu',
                        kernel_initializer='glorot_normal',
                        kernel_regularizer=l2(regularizer_const))(base_out)
+    base_out = L.Dropout(0.5)(base_out)
     predictions = L.Dense(N_CLASSES, activation='softmax',
                           kernel_initializer='glorot_normal',
                           kernel_regularizer=l2(regularizer_const))(base_out)
@@ -109,23 +114,36 @@ def _init_model(regularizer_const=1e-3, dense_units=1024, learning_rate=1e-3,
     return model
 
 
-def _train(model, epochs, epochs_batch, datagen, fast_train,
+def _train(model, epochs, checkpoint_period, datagen, fast_train,
            steps_per_epoch, validation_data, model_path):
-    for i in range(0, epochs, epochs_batch):
-        model.fit_generator(datagen,
-                            max_queue_size=1,
-                            epochs=epochs_batch + i,
-                            initial_epoch=i,
-                            steps_per_epoch=steps_per_epoch,
-                            validation_data=validation_data)
-        if not fast_train:
-            save_model(model, model_path)
+    if not fast_train:
+        monitor = 'val_acc'
+        reduce_lr = ReduceLROnPlateau(monitor=monitor,
+                                      patience=15,
+                                      verbose=1,
+                                      epsilon=0.006,
+                                      min_lr=1e-8)
+
+        checkpoint = ModelCheckpoint(model_path,
+                                     monitor=monitor,
+                                     period=checkpoint_period,
+                                     save_best_only=True)
+        callbacks = [reduce_lr, checkpoint]
+    else:
+        callbacks = None
+
+    model.fit_generator(datagen,
+                        max_queue_size=1,
+                        epochs=epochs,
+                        steps_per_epoch=steps_per_epoch,
+                        validation_data=validation_data,
+                        callbacks=callbacks)
 
 
 def train_classifier(train_gt, train_img_dir, fast_train, validation=0.2):
     batch_size = 32
     epochs = 1 if fast_train else 25
-    epochs_batch = 1 if fast_train else 5
+    checkpoint_period = 1 if fast_train else 5
     code_dir = dirname(abspath(__file__))
     model_path = join(code_dir, 'birds_model.hdf5')
 
@@ -153,14 +171,15 @@ def train_classifier(train_gt, train_img_dir, fast_train, validation=0.2):
         datagen = datagen.flow(X_train, y_train, batch_size=batch_size)
 
     if fast_train or not os.path.exists(model_path):
-        model = _init_model(regularizer_const=1e-2)
+        model = _init_model(regularizer_const=1e-2,
+                            learning_rate=1e-3)
     else:
         model = load_model(model_path)
 
-    _train(model, epochs, epochs_batch, datagen, fast_train,
-           steps_per_epoch, validation_data, model_path)
+    # _train(model, epochs, checkpoint_period, datagen, fast_train,
+    #       steps_per_epoch, validation_data, model_path)
 
-    trainable_border = 141
+    trainable_border = 107  # 141
     for layer in model.layers[:trainable_border]:
         layer.trainable = False
     for layer in model.layers[trainable_border:]:
@@ -170,7 +189,7 @@ def train_classifier(train_gt, train_img_dir, fast_train, validation=0.2):
                   loss='categorical_crossentropy',
                   metrics=['accuracy'])
 
-    _train(model, epochs, epochs_batch, datagen, fast_train,
+    _train(model, 60, checkpoint_period, datagen, fast_train,
            steps_per_epoch, validation_data, model_path)
 
 
