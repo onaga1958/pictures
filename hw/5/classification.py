@@ -17,7 +17,7 @@ from skimage.transform import resize
 from sklearn.model_selection import train_test_split
 
 
-IMG_SIZE = (299, 299, 3)  # (224, 224, 3)
+IMG_SIZE = (224, 224, 3)
 N_CLASSES = 50
 
 
@@ -52,6 +52,8 @@ class Datagen:
 
         if self.y is not None:
             y_batch = self.y[old_index:end_batch]
+            if end_batch > len(self.file_names):
+                y_batch = np.concatenate((y_batch, self.y[:self.index]))
 
         images_batch = [imread(self._full_name(file_name))
                         for file_name in file_names_batch]
@@ -176,21 +178,22 @@ def train_classifier(train_gt, train_img_dir, fast_train, validation=0.2):
     else:
         model = load_model(model_path)
 
-    # _train(model, epochs, checkpoint_period, datagen, fast_train,
-    #       steps_per_epoch, validation_data, model_path)
-
-    trainable_border = 107  # 141
-    for layer in model.layers[:trainable_border]:
-        layer.trainable = False
-    for layer in model.layers[trainable_border:]:
-        layer.trainable = True
-
-    model.compile(optimizer=Adam(lr=1e-4, decay=1e-2),
-                  loss='categorical_crossentropy',
-                  metrics=['accuracy'])
-
-    _train(model, 60, checkpoint_period, datagen, fast_train,
+    _train(model, epochs, checkpoint_period, datagen, fast_train,
            steps_per_epoch, validation_data, model_path)
+
+    if not fast_train:
+        trainable_border = 107  # 141
+        for layer in model.layers[:trainable_border]:
+            layer.trainable = False
+        for layer in model.layers[trainable_border:]:
+            layer.trainable = True
+
+        model.compile(optimizer=Adam(lr=1e-4, decay=1e-2),
+                    loss='categorical_crossentropy',
+                    metrics=['accuracy'])
+
+        _train(model, 60, checkpoint_period, datagen, fast_train,
+            steps_per_epoch, validation_data, model_path)
 
 
 def classify(model, test_img_dir):
